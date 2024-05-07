@@ -39,6 +39,16 @@ func calculateETag(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func calculateChunkSize(fileSize int64, defaultChunkSize int64, maxNumOfWorkers int) int64 {
+	resultChunkSize := defaultChunkSize
+	numOfWorkers := int(math.Ceil(float64(fileSize) / float64(defaultChunkSize)))
+	if numOfWorkers > maxNumOfWorkers {
+		// recalculate chunkSize as it needs to limit the max number of workers
+		resultChunkSize = fileSize / int64(maxNumOfWorkers)
+	}
+	return resultChunkSize
+}
+
 func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan error) {
 	defer wg.Done()
 
@@ -107,7 +117,8 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 
 func main() {
 
-	chunkSize := 1024 * 1024 // This can be configured to optimize for network condition.
+	defaultChunkSize := int64(1024 * 1024) // This can be configured to optimize for network condition.
+	maxNumOfWorkers := 30                  // Max concurrently running workers that download chunks.
 	fileURL := ""
 	fileDownloadPath := ""
 
@@ -166,8 +177,12 @@ func main() {
 		return
 	}
 
+	// Calculate chunkSize based on fileSize to avoid large files using too many workers
+	chunkSize := calculateChunkSize(fileSize, defaultChunkSize, maxNumOfWorkers)
+
 	// Calculate num of workers that will run in parallel
 	numWorkers := int(math.Ceil(float64(fileSize) / float64(chunkSize)))
+	fmt.Printf("chunkSize %d\n", chunkSize)
 	fmt.Printf("Num of workers %d\n", numWorkers)
 
 	// Download chunks in parallel with multiple works
