@@ -39,7 +39,7 @@ func calculateETag(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func worker(wg *sync.WaitGroup, download DownloadDescriptor, resultChan chan error) {
+func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan error) {
 	defer wg.Done()
 
 	start := download.start
@@ -181,7 +181,7 @@ func main() {
 			end = fileSize - 1
 		}
 
-		go worker(&wg, DownloadDescriptor{
+		go worker(&wg, &DownloadDescriptor{
 			fileURL:          fileURL, //  URL of each worker may be different if the file is hosted on different servers
 			fileDownloadPath: incompleteFileDownloadPath,
 			start:            start,
