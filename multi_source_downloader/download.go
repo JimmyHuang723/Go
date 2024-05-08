@@ -76,7 +76,7 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	// Make sure response status code is 206 (Partial Content) for each chunk,
 	// indicating that the server accepts byte-range requests and is responding with the requested chunk.
 	if resp.StatusCode != http.StatusPartialContent {
-		resultChan <- errors.New(fmt.Sprintf("Unexpected status code %d for chunk %d\n", resp.StatusCode, i))
+		resultChan <- errors.New(fmt.Sprintf("Server doesn't accept byte-range requests. Unexpected status code %d for chunk %d\n", resp.StatusCode, i))
 		return
 	}
 
@@ -215,7 +215,7 @@ func main() {
 		result := <-resultChan
 		if result != nil {
 			allWorkerSuccess = false // failed if any one of the workers has error
-			fmt.Printf("Error %s on some chunk.", result)
+			fmt.Printf("Error on some chunk : %s\n", result)
 		}
 	}
 	if !allWorkerSuccess {
