@@ -115,49 +115,40 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	return // success
 }
 
-func main() {
+func Download(fileURL string, fileDownloadDir string) bool {
 
-	defaultChunkSize := int64(1024 * 1024) // This can be configured to optimize for network condition.
+	// These can be configured to optimize for network condition.
+	defaultChunkSize := int64(1024 * 1024) // Default chunk size. This may be increased if file size is too large.
 	maxNumOfWorkers := 30                  // Max concurrently running workers that download chunks.
-	fileURL := ""
-	fileDownloadPath := ""
 
-	// Get and validate user input
-	if len(os.Args) > 2 {
-		fileURL = os.Args[1]
-		u, err := url.ParseRequestURI(fileURL)
-		if err != nil || u.Scheme == "" || u.Host == "" {
-			fmt.Printf("Invalid arg 'fileURL'. Err : %s\n", err)
-			return
-		}
-		fileDownloadDir := os.Args[2]
-		if _, err := os.Stat(fileDownloadDir); err != nil {
-			if os.IsNotExist(err) {
-				fmt.Printf("Input arg 'fileDownloadDir' doesn't exist. Err : %s\n", err)
-				return
-			}
-		}
-		fileDownloadPath = filepath.Join(fileDownloadDir, path.Base(fileURL))
-		fmt.Printf("Downloading URL : %s \nto %s\n", fileURL, fileDownloadPath)
-	} else {
-		fmt.Println("Arguments insufficient!")
-		fmt.Println("[Usage]")
-		fmt.Println("    go run download.go [fileURL] [fileDownloadDir]")
-		fmt.Println("    e.g. go run download.go https://.../xxx.zip /local/filepath")
-		return
+	// Validate input
+	// fileURL
+	u, err := url.ParseRequestURI(fileURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		fmt.Printf("Invalid arg 'fileURL'. Err : %s\n", err)
+		return false
 	}
+	// fileDownloadDir
+	if _, err := os.Stat(fileDownloadDir); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("Input arg 'fileDownloadDir' doesn't exist. Err : %s\n", err)
+			return false
+		}
+	}
+	fileDownloadPath := filepath.Join(fileDownloadDir, path.Base(fileURL))
+	fmt.Printf("Downloading URL : %s \nto %s\n", fileURL, fileDownloadPath)
 
 	// Determine file size
 	resp, err := http.Head(fileURL)
 	if err != nil {
 		fmt.Println("Error determining file size:", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	fileSize := resp.ContentLength
 	if fileSize <= 0 {
 		fmt.Println("Could not determine file size.")
-		return
+		return false
 	} else {
 		fmt.Printf("File size %d\n", fileSize)
 	}
@@ -167,19 +158,18 @@ func main() {
 	outFile, err := os.Create(incompleteFileDownloadPath)
 	if err != nil {
 		fmt.Println("Error creating output file:", err)
-		return
+		return false
 	}
 	defer outFile.Close()
 
 	// Pre-allocate file size on storage
 	if err := outFile.Truncate(fileSize); err != nil {
 		fmt.Println("Error pre-allocating file size:", err)
-		return
+		return false
 	}
 
 	// Calculate chunkSize based on fileSize to avoid large files using too many workers
 	chunkSize := calculateChunkSize(fileSize, defaultChunkSize, maxNumOfWorkers)
-
 	// Calculate num of workers that will run in parallel
 	numWorkers := int(math.Ceil(float64(fileSize) / float64(chunkSize)))
 	fmt.Printf("chunkSize %d\n", chunkSize)
@@ -219,15 +209,15 @@ func main() {
 		}
 	}
 	if !allWorkerSuccess {
-		fmt.Println("Download failed!")
-		return
+		fmt.Println("Download incomplete")
+		return false
 	}
 
 	// Rename the file once it is complete
 	errReName := os.Rename(incompleteFileDownloadPath, fileDownloadPath)
 	if errReName != nil {
 		fmt.Println("Error renaming file:", err)
-		return
+		return false
 	}
 
 	// Verify ETAG
@@ -249,4 +239,28 @@ func main() {
 	}
 
 	fmt.Println("Download complete.")
+	return true
+}
+
+func main() {
+	fileURL := ""
+	fileDownloadDir := ""
+
+	// Get user input
+	if len(os.Args) > 2 {
+		fileURL = os.Args[1]
+		fileDownloadDir = os.Args[2]
+	} else {
+		fmt.Println("Arguments insufficient!")
+		fmt.Println("[Usage]")
+		fmt.Println("    go run download.go [fileURL] [fileDownloadDir]")
+		fmt.Println("    e.g. go run download.go https://.../xxx.zip /local/filepath")
+		return
+	}
+
+	if Download(fileURL, fileDownloadDir) {
+		fmt.Println("Download success")
+	} else {
+		fmt.Println("Download failed.")
+	}
 }
