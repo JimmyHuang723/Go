@@ -49,7 +49,19 @@ func calculateChunkSize(fileSize int64, defaultChunkSize int64, maxNumOfWorkers 
 	return resultChunkSize
 }
 
-func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan error) {
+func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan error, maxRetry int) {
+	// Helper function to retry if download failed due to network error
+	retry := func(err error) {
+		if maxRetry <= 0 {
+			resultChan <- err
+			return // fail : max retry times reached, stop here.
+		} else {
+			fmt.Printf("Retry download for chunk %d\n", download.chunkIndex)
+			wg.Add(1)
+			go worker(wg, download, resultChan, maxRetry-1) // retry download but decrease maxRetry by 1.
+		}
+	}
+
 	defer wg.Done()
 
 	start := download.start
@@ -60,7 +72,7 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	if err != nil {
 		fmt.Println("Error creating request:", err)
 		resultChan <- err
-		return
+		return // fail
 	}
 
 	// Request only a portion of the resource using the Range header,
@@ -69,15 +81,15 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("Error downloading chunk %d: %s\n", i, err)
-		resultChan <- err
-		return
+		retry(err)
+		return // fail
 	}
 	defer resp.Body.Close()
 	// Make sure response status code is 206 (Partial Content) for each chunk,
 	// indicating that the server accepts byte-range requests and is responding with the requested chunk.
 	if resp.StatusCode != http.StatusPartialContent {
 		resultChan <- errors.New(fmt.Sprintf("Server doesn't accept byte-range requests. Unexpected status code %d for chunk %d\n", resp.StatusCode, i))
-		return
+		return // fail
 	}
 
 	// Open file for each chunk to write to
@@ -85,7 +97,7 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	if err != nil {
 		fmt.Println("Error opening file chunk ", err)
 		resultChan <- err
-		return
+		return // fail
 	}
 	defer outFileChunk.Close()
 
@@ -94,19 +106,19 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 	if err != nil {
 		fmt.Printf("Error seeking to position %d for chunk %d: %s\n", start, i, err)
 		resultChan <- err
-		return
+		return // fail
 	}
 
 	// Write the chunk
 	n, err := io.Copy(outFileChunk, resp.Body)
 	if err != nil {
 		fmt.Printf("Error writing chunk %d to file: %s\n", i, err)
-		resultChan <- err
-		return
+		retry(err)
+		return // fail
 	}
 	if n != end-start+1 {
-		resultChan <- errors.New(fmt.Sprintf("Error: wrote %d bytes, expected %d\n", n, end-start+1))
-		return
+		retry(errors.New(fmt.Sprintf("Error: wrote %d bytes, expected %d\n", n, end-start+1)))
+		return // fail
 	} else {
 		fmt.Printf("Wrote %d bytes for chunk %d\n", n, i)
 	}
@@ -118,8 +130,9 @@ func worker(wg *sync.WaitGroup, download *DownloadDescriptor, resultChan chan er
 func Download(fileURL string, fileDownloadDir string) bool {
 
 	// These can be configured to optimize for network condition.
-	defaultChunkSize := int64(1024 * 1024) // Default chunk size. This may be increased if file size is too large.
-	maxNumOfWorkers := 30                  // Max concurrently running workers that download chunks.
+	const defaultChunkSize = int64(1024 * 1024) // Default chunk size. This may be increased if file size is too large.
+	const maxNumOfWorkers = 30                  // Max concurrently running workers that download chunks.
+	const maxRetry = 3                          // Max retry times if one chunk fails to download due to network issue
 
 	// Validate input
 	// fileURL
@@ -193,7 +206,8 @@ func Download(fileURL string, fileDownloadDir string) bool {
 			end:              end,
 			chunkIndex:       i,
 		},
-			resultChan)
+			resultChan,
+			maxRetry)
 	}
 
 	// Wait for all workers to finish
